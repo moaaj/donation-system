@@ -1,0 +1,58 @@
+# Railway-optimized Dockerfile
+FROM python:3.11-slim
+
+# Set environment variables
+ENV PYTHONDONTWRITEBYTECODE=1
+ENV PYTHONUNBUFFERED=1
+ENV DJANGO_SETTINGS_MODULE=config.settings
+
+# Set work directory
+WORKDIR /app
+
+# Install system dependencies
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends \
+        postgresql-client \
+        build-essential \
+        libpq-dev \
+        gettext \
+    && rm -rf /var/lib/apt/lists/*
+
+# Copy requirements and install Python dependencies
+COPY requirements.txt /app/
+RUN pip install --no-cache-dir -r requirements.txt
+
+# Copy project files
+COPY . /app/
+
+# Create staticfiles directory
+RUN mkdir -p /app/staticfiles
+
+# Collect static files
+RUN python manage.py collectstatic --noinput --settings=config.settings || echo "Static files collection failed, continuing..."
+
+# Create entrypoint script for Railway
+RUN echo '#!/bin/bash\n\
+set -e\n\
+\n\
+echo "Starting Railway deployment..."\n\
+\n\
+# Run migrations\n\
+echo "Running migrations..."\n\
+python manage.py migrate --noinput\n\
+\n\
+# Create superuser if it does not exist\n\
+echo "Creating superuser..."\n\
+python manage.py shell -c "from django.contrib.auth import get_user_model; User = get_user_model(); User.objects.filter(username='"'"'admin'"'"').exists() or User.objects.create_superuser('"'"'admin'"'"', '"'"'admin@donation.com'"'"', '"'"'admin123'"'"')" || echo "Superuser creation failed"\n\
+\n\
+echo "Starting server on port $PORT..."\n\
+exec gunicorn config.wsgi:application --bind 0.0.0.0:$PORT --workers 3 --timeout 120\n\
+' > /app/entrypoint.sh
+
+RUN chmod +x /app/entrypoint.sh
+
+# Expose port (Railway will set PORT env var)
+EXPOSE $PORT
+
+# Run entrypoint
+CMD ["/app/entrypoint.sh"]

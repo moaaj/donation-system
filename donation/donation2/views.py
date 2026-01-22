@@ -290,9 +290,14 @@ def add_donation_event(request):
     if request.method == 'POST':
         form = DonationEventForm(request.POST, request.FILES)
         if form.is_valid():
-            event = form.save()
-            messages.success(request, 'Event added successfully.')
-            return redirect('donation_events')
+            try:
+                event = form.save()
+                messages.success(request, 'Event added successfully.')
+                return redirect('donation_events')
+            except Exception as e:
+                messages.error(request, f'Error creating event: {str(e)}')
+        else:
+            messages.error(request, 'Please correct the errors below.')
     else:
         form = DonationEventForm()
     return render(request, 'donation2/add_donation_event.html', {'form': form})
