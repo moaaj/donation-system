@@ -1,6 +1,10 @@
 import os
+import sys
 import urllib.parse as urlparse
-from .settings import *
+
+from django.core.exceptions import ImproperlyConfigured
+
+from .settings import *  # noqa: F403, F401
 
 # Override settings for production
 DEBUG = False
@@ -32,21 +36,57 @@ if os.getenv('RENDER_EXTERNAL_HOSTNAME'):
     ALLOWED_HOSTS.append(os.getenv('RENDER_EXTERNAL_HOSTNAME'))
 if os.getenv('RAILWAY_PUBLIC_DOMAIN'):
     ALLOWED_HOSTS.append(os.getenv('RAILWAY_PUBLIC_DOMAIN'))
+if os.getenv('ALLOWED_HOSTS'):
+    ALLOWED_HOSTS.extend(
+        [h.strip() for h in os.getenv('ALLOWED_HOSTS', '').split(',') if h.strip()]
+    )
+
+# CSRF for HTTPS reverse proxies (Render, Railway, custom domains)
+CSRF_TRUSTED_ORIGINS = []
+_render_host = os.getenv('RENDER_EXTERNAL_HOSTNAME')
+if _render_host:
+    CSRF_TRUSTED_ORIGINS.append(f'https://{_render_host}')
+_railway = os.getenv('RAILWAY_PUBLIC_DOMAIN')
+if _railway:
+    CSRF_TRUSTED_ORIGINS.append(f'https://{_railway}')
+if os.getenv('CSRF_TRUSTED_ORIGINS'):
+    CSRF_TRUSTED_ORIGINS.extend(
+        [o.strip() for o in os.getenv('CSRF_TRUSTED_ORIGINS', '').split(',') if o.strip()]
+    )
 
 # Database configuration for production
-if os.getenv('DATABASE_URL'):
-    # Parse database URL manually (no external dependencies needed)
-    url = urlparse.urlparse(os.getenv('DATABASE_URL'))
-DATABASES = {
-    'default': {
-        'ENGINE': 'django.db.backends.postgresql',
-            'NAME': url.path[1:],
-            'USER': url.username,
-            'PASSWORD': url.password,
-            'HOST': url.hostname,
-            'PORT': url.port,
+database_url = os.getenv('DATABASE_URL', '').strip()
+if database_url.startswith('postgres://'):
+    database_url = database_url.replace('postgres://', 'postgresql://', 1)
+
+if database_url:
+    url = urlparse.urlparse(database_url)
+    port = url.port or 5432
+    DATABASES = {
+        'default': {
+            'ENGINE': 'django.db.backends.postgresql',
+            'NAME': url.path[1:] if url.path else '',
+            'USER': url.username or '',
+            'PASSWORD': url.password or '',
+            'HOST': url.hostname or '',
+            'PORT': str(port),
         }
     }
+    if not DEBUG:
+        DATABASES['default']['CONN_MAX_AGE'] = 600
+        DATABASES['default']['OPTIONS'] = {'connect_timeout': 10}
+elif 'collectstatic' in sys.argv:
+    # Docker image build / CI: collectstatic does not need a real database.
+    DATABASES = {
+        'default': {
+            'ENGINE': 'django.db.backends.sqlite3',
+            'NAME': ':memory:',
+        }
+    }
+else:
+    raise ImproperlyConfigured(
+        'DATABASE_URL must be set in production (use a free Postgres such as Neon or Supabase).'
+    )
 
 # Static files configuration for production
 STATIC_URL = '/static/'
@@ -61,12 +101,12 @@ STATICFILES_DIRS = [
 if 'whitenoise.middleware.WhiteNoiseMiddleware' not in MIDDLEWARE:
     MIDDLEWARE.insert(1, 'whitenoise.middleware.WhiteNoiseMiddleware')
 
-# Whitenoise settings
-STATICFILES_STORAGE = 'whitenoise.storage.CompressedManifestStaticFilesStorage'
+# Whitenoise settings (non-manifest avoids rare missing-map deploy failures)
+STATICFILES_STORAGE = 'whitenoise.storage.CompressedStaticFilesStorage'
 
 # Allow all file extensions for static files
 WHITENOISE_USE_FINDERS = True
-WHITENOISE_AUTOREFRESH = True
+WHITENOISE_AUTOREFRESH = False
 
 # Email configuration for production
 EMAIL_BACKEND = 'django.core.mail.backends.smtp.EmailBackend'
@@ -93,4 +133,9 @@ LOGGING = {
 }
 
 # Site settings for production
-SITE_DOMAIN = os.getenv('RAILWAY_PUBLIC_DOMAIN', 'your-app.up.railway.app')
+SITE_DOMAIN = (
+    os.getenv('RENDER_EXTERNAL_HOSTNAME')
+    or os.getenv('RAILWAY_PUBLIC_DOMAIN')
+    or os.getenv('SITE_DOMAIN')
+    or 'localhost'
+)
