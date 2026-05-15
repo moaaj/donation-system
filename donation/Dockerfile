@@ -1,4 +1,5 @@
-FROM python:3.11-slim
+# Bookworm: `wkhtmltopdf` exists in apt; `python:3.11-slim` tracks newer Debian (e.g. trixie) where it may not.
+FROM python:3.11-slim-bookworm
 
 WORKDIR /app
 
