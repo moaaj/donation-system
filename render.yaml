@@ -1,6 +1,10 @@
 # Render Blueprint: https://render.com/docs/blueprint-spec
-# Free web tier: https://render.com/docs/free
-# Add DATABASE_URL in the Render dashboard (free Postgres: https://neon.tech or https://supabase.com).
+# Free Postgres is time-limited on Render; see https://render.com/docs/free
+databases:
+  - name: donation-db
+    plan: free
+    region: oregon
+
 services:
   - type: web
     name: donation-web
@@ -9,6 +13,8 @@ services:
     region: oregon
     rootDir: donation
     dockerfilePath: ./Dockerfile
+    # Build context is the service root (donation/), same as Dockerfile paths.
+    dockerContext: .
     healthCheckPath: /
     envVars:
       - key: DJANGO_SETTINGS_MODULE
@@ -16,4 +22,6 @@ services:
       - key: DJANGO_SECRET_KEY
         generateValue: true
       - key: DATABASE_URL
-        sync: false
+        fromDatabase:
+          name: donation-db
+          property: connectionString
